@@ -1,51 +1,20 @@
-name: Accounting Student App
+name: Simple Test Workflow
 
 on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
-  build:
+  hello-world:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Linting
+      - name: Run basic check
         run: |
-          npm run lint
-          echo "Code is linted!"
-
-      - name: Build
-        run: npm run build
-        env:
-          CI: true
-
-      - name: Test
-        run: npm test
-        env:
-          CI: true
-
-      - name: Deploy (Optional)
-        if: success()
-        run: |
-          echo "Deploying to Heroku..."
-          # git push heroku main
-
-      - name: Publish (Optional)
-        if: always()
-        run: |
-          echo "Publishing to Netlify..."
-          # git push netlify main
+          echo "Workflow started successfully!"
+          ls -la
