@@ -1,44 +1,157 @@
-name: Test Capturing macOS Runner Image
+name: macOS App Pull & Windows Vision Verification Loop
 
 on:
   workflow_dispatch:
   push:
     paths:
-      - '.github/workflows/capture-macos-image.yml'
+      - '.github/workflows/main.yml'
 
 jobs:
-  capture-image:
+  pull-from-macos:
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
-      - name: Inspect disk space, APFS layout, and available installers/volumes
+      - name: Pull a sample app bundle from macOS
         run: |
-          echo "=== Disk Space ===" > diag.txt
-          df -h >> diag.txt
-          echo "" >> diag.txt
-          echo "=== APFS List ===" >> diag.txt
-          diskutil apfs list >> diag.txt 2>&1 || true
-          echo "" >> diag.txt
-          echo "=== Volumes & Applications ===" >> diag.txt
-          ls -la /Volumes /Applications 2>&1 >> diag.txt || true
-          cat diag.txt
-
-      - name: Attempt creating DMG/ISO image from available system components
-        run: |
-          mkdir -p staging
-          # محاولة إنشاء DMG أولاً ثم تحويله إلى ISO
-          hdiutil create -fs APFS -volname "macOSRunnerTest" -srcfolder /System/Library/CoreServices/SystemVersion.plist -ov staging_test.dmg 2>&1 || true
-          if [ -f staging_test.dmg ]; then
-            hdiutil convert staging_test.dmg -format UDTO -o runner_test 2>&1 || true
-            [ -f runner_test.cdr ] && mv runner_test.cdr runner_test.iso || true
+          mkdir -p pulled_bundle
+          SRC_APP="/System/Applications/Calculator.app"
+          if [ ! -d "$SRC_APP" ]; then
+            SRC_APP=$(find /Applications /System/Applications -maxdepth 2 -name "*.app" 2>/dev/null | head -n 1)
           fi
-          ls -lh runner_test.iso staging_test.dmg 2>&1 || true
+          echo "Selected app: $SRC_APP" > pulled_bundle/info.txt
+          ditto -c -k --sequesterRsrc --keepParent "$SRC_APP" pulled_bundle/macos_app.zip
+          ls -lh pulled_bundle/
 
-      - name: Upload test artifacts
+      - name: Upload pulled macOS bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-pulled-bundle
+          path: pulled_bundle/
+
+  win-vision-loop:
+    needs: pull-from-macos
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Download macOS bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-pulled-bundle
+          path: pulled_bundle
+
+      - name: Install Ollama and extract bundle on Windows
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path workdir, reports | Out-Null
+          if (Test-Path "pulled_bundle\macos_app.zip") {
+            Expand-Archive -Path "pulled_bundle\macos_app.zip" -DestinationPath "workdir\extracted" -Force
+          }
+          Get-ChildItem "workdir\extracted" -Recurse -ErrorAction SilentlyContinue |
+            Select-Object -First 40 FullName, Length |
+            Out-File "reports\extracted_files.txt" -Encoding utf8
+
+          winget install --id Ollama.Ollama -e --silent --accept-package-agreements --accept-source-agreements
+          $ollamaExe = "C:\Users\$env:USERNAME\AppData\Local\Programs\Ollama\ollama.exe"
+          if (-not (Test-Path $ollamaExe)) { $ollamaExe = "ollama" }
+
+          Start-Process -FilePath $ollamaExe -ArgumentList "serve" -WindowStyle Hidden
+          Start-Sleep -Seconds 6
+
+          $chosenModel = ""
+          foreach ($m in @("qwen2.5:14b", "huihui_ai/deepseek-r1-abliterated:8b", "qwen2.5:7b")) {
+            & $ollamaExe pull $m 2>&1 | Out-File "reports\pull_$($m -replace '[:/]','_').log" -Encoding utf8
+            if ($LASTEXITCODE -eq 0) { $chosenModel = $m; break }
+          }
+
+          $visionModel = ""
+          foreach ($vm in @("qwen2.5vl:7b", "llava:7b")) {
+            & $ollamaExe pull $vm 2>&1 | Out-File "reports\pull_vision.log" -Encoding utf8
+            if ($LASTEXITCODE -eq 0) { $visionModel = $vm; break }
+          }
+
+          "TEXT_MODEL=$chosenModel" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "VISION_MODEL=$visionModel" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Run unpack, patch attempt, screenshot, and vision check loop
+        shell: pwsh
+        run: |
+          $scriptCode = @'
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type -AssemblyName System.Drawing
+
+          $maxCycles = 5
+          $cycle = 0
+          $lastFeedback = ""
+
+          while ($cycle -lt $maxCycles) {
+            $cycle++
+            $cycleTag = "cycle_$cycle"
+            "=== $cycleTag | TextModel: $env:TEXT_MODEL | VisionModel: $env:VISION_MODEL ===" |
+              Tee-Object -FilePath "reports\loop.log" -Append
+
+            $patchNotePath = "workdir\patch_$cycleTag.txt"
+            $filesSummary = Get-Content "reports\extracted_files.txt" -ErrorAction SilentlyContinue | Select-Object -First 20 | Out-String
+
+            $prompt = "Cycle $cycle of $maxCycles. Previous feedback: $lastFeedback`nFiles:`n$filesSummary`nGive a concise inspection or patch step and what to check in the screenshot."
+            $bodyObj = @{ model = $env:TEXT_MODEL; prompt = $prompt; stream = $false } | ConvertTo-Json -Depth 4
+
+            try {
+              $resp = Invoke-RestMethod -Uri "http://127.0.0.1:11434/api/generate" -Method Post -Body $bodyObj -ContentType "application/json; charset=utf-8"
+              $aiText = $resp.response
+            } catch {
+              $aiText = "Model call error: $($_.Exception.Message)"
+            }
+            $aiText | Out-File -FilePath $patchNotePath -Encoding utf8
+
+            $execLog = "reports\exec_$cycleTag.log"
+            $exeCandidate = Get-ChildItem "workdir\extracted" -Include *.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($exeCandidate) {
+              Start-Process -FilePath $exeCandidate.FullName -ErrorAction SilentlyContinue
+              Start-Sleep -Seconds 2
+              "Attempted launching: $($exeCandidate.FullName)" | Out-File -FilePath $execLog -Encoding utf8
+            } else {
+              "No Windows .exe inside extracted macOS bundle; verified extracted structure." | Out-File -FilePath $execLog -Encoding utf8
+            }
+
+            $shotPath = "reports\shot_$cycleTag.png"
+            $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bitmap = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
+            $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+            $graphics.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
+            $bitmap.Save($shotPath, [System.Drawing.Imaging.ImageFormat]::Png)
+            $graphics.Dispose()
+            $bitmap.Dispose()
+
+            $visionReport = "reports\vision_$cycleTag.txt"
+            if ($env:VISION_MODEL -and (Test-Path $shotPath)) {
+              $b64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($shotPath))
+              $vBody = @{
+                model  = $env:VISION_MODEL
+                prompt = "Inspect this screenshot briefly and report what is visible on screen and any window or error."
+                images = @($b64)
+                stream = $false
+              } | ConvertTo-Json -Depth 4
+              try {
+                $vResp = Invoke-RestMethod -Uri "http://127.0.0.1:11434/api/generate" -Method Post -Body $vBody -ContentType "application/json; charset=utf-8"
+                $vOut = $vResp.response
+              } catch {
+                $vOut = "Vision check fallback error: $($_.Exception.Message)"
+              }
+              $vOut | Out-File -FilePath $visionReport -Encoding utf8
+              $lastFeedback = $vOut
+            } else {
+              $imgInfo = Get-Item $shotPath | Select-Object Name, Length | Out-String
+              "No vision model pulled; verified screenshot file exists:`n$imgInfo" | Out-File -FilePath $visionReport -Encoding utf8
+              $lastFeedback = Get-Content $patchNotePath -Raw
+            }
+          }
+          '@
+          Set-Content -Path "workdir\loop.ps1" -Value $scriptCode -Encoding utf8
+          & "workdir\loop.ps1"
+
+      - name: Upload loop results and screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: macos-image-test
-          path: |
-            diag.txt
-            runner_test.iso
+          name: win-vision-loop-results
+          path: reports/
