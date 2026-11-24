@@ -1,4 +1,4 @@
-name: Open Notes, Type Emojis & Screenshot
+name: Open TextEdit with Emojis & Screenshot
 
 on:
   workflow_dispatch:
@@ -7,22 +7,23 @@ on:
       - '.github/workflows/notes-emoji-shot.yml'
 
 jobs:
-  notes-emoji-screenshot:
+  emoji-screenshot:
     runs-on: macos-latest
     timeout-minutes: 5
     steps:
-      - name: Open Notes, type emojis, and capture PNG
+      - name: Open TextEdit with emojis and capture PNG
         run: |
-          osascript << 'EOF'
-          tell application "Notes"
-            activate
-            delay 1.5
-            tell account "On My Mac"
-              make new note at folder "Notes" with properties {body: "<h1>Apple Emojis</h1><p>😂🤣🥺🤯🔥🚀💀💯🫪🫯🫍🫈</p>"}
-            end tell
-          end tell
+          open -a TextEdit
+          sleep 2
+
+          python3 - << 'EOF'
+          import subprocess
+
+          txt = "Apple Emojis\n😂🤣🥺🤯🔥🚀💀💯🫪🫯🫍🫈\n"
+          subprocess.run(["pbcopy"], input=txt.encode("utf-8"), check=False)
           EOF
 
+          osascript -e 'tell application "TextEdit" to activate' -e 'tell application "TextEdit" to make new document with properties {text: "Apple Emojis" & return & "😂🤣🥺🤯🔥🚀💀💯🫪🫯🫍🫈"}' 2>/dev/null || true
           sleep 2
           screencapture -x macos-notes-emoji.png
 
