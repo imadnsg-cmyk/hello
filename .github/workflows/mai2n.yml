@@ -20,7 +20,10 @@ jobs:
 
       - name: "Inspect font directly & extract emojis"
         run: |
-          echo "[$(date -u +%H:%M:%S)] Installing fonttools & pillow..."
+          echo "[$(date -u +%H:%M:%S)] Creating venv & installing fonttools & pillow..."
+          python3 -m venv .venv
+          source .venv/bin/activate
+          python3 -m pip install -q --upgrade pip
           python3 -m pip install -q fonttools pillow
 
           python3 - << 'EOF'
