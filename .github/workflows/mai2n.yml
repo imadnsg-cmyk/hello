@@ -1,36 +1,87 @@
-name: Search System Fonts & Emoji Files on macOS
+name: Extract Selected Apple Emojis
 
 on:
   workflow_dispatch:
   push:
     paths:
-      - '.github/workflows/find-system-fonts-emojis.yml'
+      - '.github/workflows/extract-emojis.yml'
 
 jobs:
-  search-fonts-emojis:
+  extract:
     runs-on: macos-latest
     timeout-minutes: 10
     steps:
-      - name: Search for font & emoji files across macOS
+      - name: Extract emojis from Apple Color Emoji.ttc
         run: |
-          echo "=== macOS Font & Emoji File Search ===" > system_fonts_emojis.txt
-          date -u >> system_fonts_emojis.txt
-          echo "" >> system_fonts_emojis.txt
+          mkdir -p extracted_emojis
+          python3 -m venv .venv
+          .venv/bin/pip install -q --upgrade pip
+          .venv/bin/pip install -q fonttools pillow
 
-          echo "--- [1] Emoji-related files (case-insensitive) ---" >> system_fonts_emojis.txt
-          find /System/Library/Fonts /Library/Fonts "$HOME/Library/Fonts" -maxdepth 4 -iname "*emoji*" -exec ls -lh {} + 2>/dev/null >> system_fonts_emojis.txt || true
-          echo "" >> system_fonts_emojis.txt
+          .venv/bin/python - << 'EOF'
+          from fontTools.ttLib import TTFont
+          from PIL import Image, ImageDraw, ImageFont
 
-          echo "--- [2] All font files (.ttc, .ttf, .otf, .woff2, .dfont) in System/Library/Fonts ---" >> system_fonts_emojis.txt
-          find /System/Library/Fonts /Library/Fonts -maxdepth 4 \( -iname "*.ttc" -o -iname "*.ttf" -o -iname "*.otf" -o -iname "*.woff2" -o -iname "*.dfont" \) -exec ls -lh {} + 2>/dev/null | sort -k5 -hr >> system_fonts_emojis.txt || true
-          echo "" >> system_fonts_emojis.txt
+          ttc_path = "/System/Library/Fonts/Apple Color Emoji.ttc"
+          tt = TTFont(ttc_path, fontNumber=0)
+          cmap = tt.getBestCmap() or {}
+          sbix = tt["sbix"] if "sbix" in tt else None
 
-          echo "--- [3] Any emoji/symbol assets in /System/Library/PrivateFrameworks or CoreServices ---" >> system_fonts_emojis.txt
-          find /System/Library/PrivateFrameworks /System/Library/CoreServices -maxdepth 4 \( -iname "*emoji*" -o -iname "*Emoji*" \) 2>/dev/null | head -n 120 >> system_fonts_emojis.txt || true
+          top_strike = None
+          top_size = None
+          if sbix and sbix.strikes:
+              top_size, top_strike = sorted(sbix.strikes.items(), key=lambda kv: kv[0], reverse=True)[0]
 
-      - name: Upload Search Results
+          emojis = {
+              "joy":            0x1F602,
+              "rofl":           0x1F923,
+              "pleading":       0x1F97A,
+              "mindblown":      0x1F92F,
+              "fire":           0x1F525,
+              "rocket":         0x1F680,
+              "skull":          0x1F480,
+              "hundred":        0x1F4AF,
+              "distorted_face": 0x1FAE9,
+              "fight_cloud":    0x1FAEF,
+              "orca":           0x1FACD,
+              "hairy_creature": 0x1FAC8,
+          }
+
+          pil_font = None
+          for sz in [160, 128, 96]:
+              try:
+                  pil_font = ImageFont.truetype(ttc_path, size=sz)
+                  break
+              except Exception:
+                  pass
+
+          for name, cp in emojis.items():
+              saved_raw = False
+              gname = cmap.get(cp)
+              if top_strike and gname and gname in top_strike.glyphs:
+                  raw = top_strike.glyphs[gname].imageData or b""
+                  png_pos = raw.find(b"\x89PNG")
+                  if png_pos != -1:
+                      with open(f"extracted_emojis/{name}.png", "wb") as f:
+                          f.write(raw[png_pos:])
+                      saved_raw = True
+
+              if not saved_raw:
+                  img = Image.new("RGBA", (180, 180), (0, 0, 0, 0))
+                  draw = ImageDraw.Draw(img)
+                  if pil_font is not None:
+                      try:
+                          draw.text((16, 12), chr(cp), font=pil_font, embedded_color=True)
+                      except TypeError:
+                          draw.text((16, 12), chr(cp), font=pil_font, fill=(255, 255, 255, 255))
+                  img.save(f"extracted_emojis/{name}.png", "PNG")
+
+          print(f"Extracted {len(emojis)} emojis (top sbix strike: {top_size})")
+          EOF
+
+      - name: Upload Extracted PNGs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: macos-fonts-emojis-search
-          path: system_fonts_emojis.txt
+          name: extracted-apple-emojis
+          path: extracted_emojis/*.png
