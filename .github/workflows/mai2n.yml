@@ -1,51 +1,102 @@
-name: Accounting Student App
+name: Emoji Fonts Comparison (Single File)
 
 on:
+  workflow_dispatch:
   push:
-    branches:
-      - main
+    paths:
+      - '.github/workflows/emoji-compare.yml'
 
 jobs:
-  build:
+  render:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Download Emoji Fonts (Apple & Noto)
+        run: |
+          curl -L -o AppleColorEmoji.ttf "https://github.com/samuelngs/apple-emoji-linux/releases/latest/download/AppleColorEmoji.ttf"
+          curl -L -o NotoColorEmoji.ttf "https://github.com/googlefonts/noto-emoji/raw/main/fonts/NotoColorEmoji.ttf"
+
+      - name: Create HTML Comparison Page
+        run: |
+          cat << 'EOF' > index.html
+          <!DOCTYPE html>
+          <html lang="ar" dir="rtl">
+          <head>
+          <meta charset="UTF-8">
+          <style>
+            @font-face {
+              font-family: 'AppleEmoji';
+              src: url('./AppleColorEmoji.ttf') format('truetype');
+            }
+            @font-face {
+              font-family: 'NotoEmoji';
+              src: url('./NotoColorEmoji.ttf') format('truetype');
+            }
+            body {
+              font-family: system-ui, -apple-system, sans-serif;
+              background: #111;
+              color: #fff;
+              padding: 40px;
+              margin: 0;
+            }
+            .card {
+              background: #1e1e1e;
+              border-radius: 16px;
+              padding: 24px;
+              margin-bottom: 24px;
+              border: 1px solid #333;
+            }
+            .apple { font-family: 'AppleEmoji', sans-serif; font-size: 40px; line-height: 1.6; }
+            .noto  { font-family: 'NotoEmoji', sans-serif; font-size: 40px; line-height: 1.6; }
+            h2 { margin-top: 0; font-size: 18px; color: #aaa; }
+          </style>
+          </head>
+          <body>
+            <div class="card">
+              <h2>1. رندر خط الآيفون (AppleColorEmoji - SBIX 3D)</h2>
+              <div class="apple">
+                تجربة الخطوط والإيموجي 🚀🔥😂🥺❤️✨👑📸🥳😭🤯
+              </div>
+            </div>
+
+            <div class="card">
+              <h2>2. رندر خط أندرويد القياسي (NotoColorEmoji)</h2>
+              <div class="noto">
+                تجربة الخطوط والإيموجي 🚀🔥😂🥺❤️✨👑📸🥳😭🤯
+              </div>
+            </div>
+          </body>
+          </html>
+          EOF
+
+      - name: Setup Playwright & Render PNG + PDF
+        run: |
+          npm init -y
+          npm install playwright
+          npx playwright install chromium
+
+          cat << 'EOF' > render.js
+          const { chromium } = require('playwright');
+          const path = require('path');
+
+          (async () => {
+            const browser = await chromium.launch();
+            const page = await browser.newPage({ deviceScaleFactor: 2 });
+            await page.goto('file://' + path.resolve('index.html'), { waitUntil: 'networkidle' });
+            await page.evaluateHandle('document.fonts.ready');
+
+            await page.screenshot({ path: 'comparison.png', fullPage: true });
+            await page.pdf({ path: 'comparison.pdf', format: 'A4', printBackground: true });
+
+            await browser.close();
+          })();
+          EOF
+
+          node render.js
+
+      - name: Upload PNG and PDF Artifacts
+        uses: actions/upload-artifact@v4
         with:
-          fetch-depth: 0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Linting
-        run: |
-          npm run lint
-          echo "Code is linted!"
-
-      - name: Build
-        run: npm run build
-        env:
-          CI: true
-
-      - name: Test
-        run: npm test
-        env:
-          CI: true
-
-      - name: Deploy (Optional)
-        if: success()
-        run: |
-          echo "Deploying to Heroku..."
-          # git push heroku main
-
-      - name: Publish (Optional)
-        if: always()
-        run: |
-          echo "Publishing to Netlify..."
-          # git push netlify main
+          name: emoji-comparison-output
+          path: |
+            comparison.png
+            comparison.pdf
