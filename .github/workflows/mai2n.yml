@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - '.github/workflows/macos-runner-png-only.yml'
+      - '.github/workflows/mai2n.yml'
 
 jobs:
   png-screenshot:
@@ -23,28 +23,27 @@ jobs:
 
           if [ ! -s macos-runner-screenshot.png ]; then
             python3 -m venv .venv
-            source .venv/bin/activate
-            python3 -m pip install -q pillow
-            python3 - << 'EOF'
-            import platform, subprocess
-            from PIL import Image, ImageDraw
+            .venv/bin/pip install -q pillow
+            .venv/bin/python - << 'EOF'
+import platform, subprocess
+from PIL import Image, ImageDraw
 
-            sw = subprocess.getoutput("sw_vers").replace("\n", " | ")
-            lines = [
-                "GitHub Actions macOS Runner",
-                sw,
-                platform.platform(),
-                "Display: Headless Runner (No physical screen)"
-            ]
-            img = Image.new("RGB", (1280, 720), (15, 23, 42))
-            draw = ImageDraw.Draw(img)
-            y = 120
-            for idx, line in enumerate(lines):
-                color = (56, 189, 248) if idx == 0 else (226, 232, 240)
-                draw.text((80, y), line, fill=color)
-                y += 65
-            img.save("macos-runner-screenshot.png", "PNG")
-            EOF
+sw = subprocess.getoutput("sw_vers").replace("\n", " | ")
+lines = [
+    "GitHub Actions macOS Runner",
+    sw,
+    platform.platform(),
+    "Display: Headless Runner"
+]
+img = Image.new("RGB", (1280, 720), (15, 23, 42))
+draw = ImageDraw.Draw(img)
+y = 120
+for idx, line in enumerate(lines):
+    color = (56, 189, 248) if idx == 0 else (226, 232, 240)
+    draw.text((80, y), line, fill=color)
+    y += 65
+img.save("macos-runner-screenshot.png", "PNG")
+EOF
           fi
 
       - name: Upload PNG
