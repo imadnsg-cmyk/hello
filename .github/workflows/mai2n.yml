@@ -250,8 +250,14 @@ jobs:
         run: |
           echo "[$(date -u +%H:%M:%S)] Checking PDF fallbacks..."
           python3 - << 'EOF'
-          import os
-          from PIL import Image
+          import os, subprocess, sys
+
+          try:
+              from PIL import Image
+          except ImportError:
+              print("PIL not found, installing pillow...")
+              subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "pillow"])
+              from PIL import Image
 
           for base in ['attempt1-chromium', 'attempt2-firefox']:
               png_path = f'{base}.png'
@@ -263,6 +269,10 @@ jobs:
                   print(msg)
                   with open('diagnostics.txt', 'a') as f:
                       f.write(msg + '\n')
+              elif os.path.exists(pdf_path):
+                  print(f"{pdf_path} already exists.")
+              else:
+                  print(f"No {png_path} found to convert.")
           EOF
 
       - name: "Upload All Attempt Outputs"
