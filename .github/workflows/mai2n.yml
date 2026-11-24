@@ -1,54 +1,36 @@
-name: macOS Runner PNG Screenshot
+name: Search System Fonts & Emoji Files on macOS
 
 on:
   workflow_dispatch:
   push:
     paths:
-      - '.github/workflows/mai2n.yml'
+      - '.github/workflows/find-system-fonts-emojis.yml'
 
 jobs:
-  png-screenshot:
+  search-fonts-emojis:
     runs-on: macos-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
-      - name: Capture macOS screen as PNG
+      - name: Search for font & emoji files across macOS
         run: |
-          screencapture -x macos-runner-screenshot.png || true
+          echo "=== macOS Font & Emoji File Search ===" > system_fonts_emojis.txt
+          date -u >> system_fonts_emojis.txt
+          echo "" >> system_fonts_emojis.txt
 
-          if [ ! -s macos-runner-screenshot.png ]; then
-            open -a Finder || true
-            sleep 1
-            screencapture -x macos-runner-screenshot.png || true
-          fi
+          echo "--- [1] Emoji-related files (case-insensitive) ---" >> system_fonts_emojis.txt
+          find /System/Library/Fonts /Library/Fonts "$HOME/Library/Fonts" -maxdepth 4 -iname "*emoji*" -exec ls -lh {} + 2>/dev/null >> system_fonts_emojis.txt || true
+          echo "" >> system_fonts_emojis.txt
 
-          if [ ! -s macos-runner-screenshot.png ]; then
-            python3 -m venv .venv
-            .venv/bin/pip install -q pillow
-            .venv/bin/python - << 'EOF'
-          import platform, subprocess
-          from PIL import Image, ImageDraw
+          echo "--- [2] All font files (.ttc, .ttf, .otf, .woff2, .dfont) in System/Library/Fonts ---" >> system_fonts_emojis.txt
+          find /System/Library/Fonts /Library/Fonts -maxdepth 4 \( -iname "*.ttc" -o -iname "*.ttf" -o -iname "*.otf" -o -iname "*.woff2" -o -iname "*.dfont" \) -exec ls -lh {} + 2>/dev/null | sort -k5 -hr >> system_fonts_emojis.txt || true
+          echo "" >> system_fonts_emojis.txt
 
-          sw = subprocess.getoutput("sw_vers").replace("\n", " | ")
-          lines = [
-              "GitHub Actions macOS Runner",
-              sw,
-              platform.platform(),
-              "Display: Headless Runner"
-          ]
-          img = Image.new("RGB", (1280, 720), (15, 23, 42))
-          draw = ImageDraw.Draw(img)
-          y = 120
-          for idx, line in enumerate(lines):
-              color = (56, 189, 248) if idx == 0 else (226, 232, 240)
-              draw.text((80, y), line, fill=color)
-              y += 65
-          img.save("macos-runner-screenshot.png", "PNG")
-          EOF
-          fi
+          echo "--- [3] Any emoji/symbol assets in /System/Library/PrivateFrameworks or CoreServices ---" >> system_fonts_emojis.txt
+          find /System/Library/PrivateFrameworks /System/Library/CoreServices -maxdepth 4 \( -iname "*emoji*" -o -iname "*Emoji*" \) 2>/dev/null | head -n 120 >> system_fonts_emojis.txt || true
 
-      - name: Upload PNG
+      - name: Upload Search Results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: macos-runner-png
-          path: macos-runner-screenshot.png
+          name: macos-fonts-emojis-search
+          path: system_fonts_emojis.txt
