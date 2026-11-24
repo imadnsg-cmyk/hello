@@ -1,28 +1,44 @@
-name: Windows Latest QEMU VM Runner
+name: Test Capturing macOS Runner Image
 
 on:
   workflow_dispatch:
   push:
     paths:
-      - '.github/workflows/win-qemu-vm.yml'
+      - '.github/workflows/capture-macos-image.yml'
 
 jobs:
-  win-vm:
-    runs-on: windows-latest
-    timeout-minutes: 15
+  capture-image:
+    runs-on: macos-latest
+    timeout-minutes: 30
     steps:
-      - name: Install QEMU on Windows runner
-        shell: pwsh
+      - name: Inspect disk space, APFS layout, and available installers/volumes
         run: |
-          winget install --id SoftwareFreedomConservancy.QEMU -e --silent --accept-package-agreements --accept-source-agreements
-          $qemuDir = "C:\Program Files\qemu"
-          if (Test-Path $qemuDir) {
-            "C:\Program Files\qemu" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          }
+          echo "=== Disk Space ===" > diag.txt
+          df -h >> diag.txt
+          echo "" >> diag.txt
+          echo "=== APFS List ===" >> diag.txt
+          diskutil apfs list >> diag.txt 2>&1 || true
+          echo "" >> diag.txt
+          echo "=== Volumes & Applications ===" >> diag.txt
+          ls -la /Volumes /Applications 2>&1 >> diag.txt || true
+          cat diag.txt
 
-      - name: Verify QEMU VM capability
-        shell: pwsh
+      - name: Attempt creating DMG/ISO image from available system components
         run: |
-          qemu-system-x86_64.exe --version
-          qemu-img.exe create -f qcow2 vm_disk.qcow2 20G
-          Get-Item vm_disk.qcow2 | Select-Object Name, Length
+          mkdir -p staging
+          # محاولة إنشاء DMG أولاً ثم تحويله إلى ISO
+          hdiutil create -fs APFS -volname "macOSRunnerTest" -srcfolder /System/Library/CoreServices/SystemVersion.plist -ov staging_test.dmg 2>&1 || true
+          if [ -f staging_test.dmg ]; then
+            hdiutil convert staging_test.dmg -format UDTO -o runner_test 2>&1 || true
+            [ -f runner_test.cdr ] && mv runner_test.cdr runner_test.iso || true
+          fi
+          ls -lh runner_test.iso staging_test.dmg 2>&1 || true
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-image-test
+          path: |
+            diag.txt
+            runner_test.iso
