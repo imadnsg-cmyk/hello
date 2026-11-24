@@ -38,7 +38,7 @@ jobs:
 
           python3 - << 'EOF'
           import os, time
-          from fontTools.ttLib import TTFont, newTable
+          from fontTools.ttLib import TTFont
           from PIL import Image, ImageDraw, ImageFont
 
           t0 = time.time()
@@ -52,7 +52,6 @@ jobs:
           tt = TTFont(base_path, fontNumber=0)
           log(f"Loaded base font. Tables: {list(tt.keys())}")
 
-          # Prepare sample 128x128 RGBA PNGs
           items = [
               ("pua_rocket", "🚀", 0xE001),
               ("pua_fire",   "🔥", 0xE002),
@@ -80,11 +79,9 @@ jobs:
                       draw.text((8, 4), ch, font=font_pil, fill=(255, 255, 255, 255))
               img.save(f"pua_src/{slug}.png", "PNG")
 
-          # Add PUA codepoints into cmap pointing to existing glyphs (as a quick mapping test)
           cmap = tt.getBestCmap() or {}
           added_map = {}
           for slug, ch, cp in items:
-              # Find first codepoint in ch that exists in cmap
               src_gname = None
               for c in ch:
                   if ord(c) in cmap:
@@ -102,14 +99,26 @@ jobs:
           tt.save(out_ttf)
           log(f"Saved {out_ttf} ({os.path.getsize(out_ttf)} bytes)")
 
-          # Verify PUA codepoints exist in saved font cmap
           tt2 = TTFont(out_ttf)
           cmap2 = tt2.getBestCmap() or {}
           verified = {f"U+{cp:04X}": cmap2.get(cp) for _, _, cp in items}
           log(f"Verified in saved font cmap: {verified}")
 
-          # Write copyable PUA characters file
           pua_str = "".join(chr(cp) for _, _, cp in items)
           with open("pua_characters.txt", "w", encoding="utf-8") as f:
               f.write("PUA Chars (spaced): " + " ".join(chr(cp) for _, _, cp in items) + "\n")
-              f.write("PUA Chars (joined): " + pua_
+              f.write("PUA Chars (joined): " + pua_str + "\n")
+              for slug, ch, cp in items:
+                  f.write(f"U+{cp:04X} -> {slug} (base: {ch}) -> glyph: {verified.get(f'U+{cp:04X}')}\n")
+          EOF
+
+      - name: Upload PUA Experiment Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pua-cbdt-experiment
+          path: |
+            out_font/PUA_Mapped_Test.ttf
+            pua_characters.txt
+            pua_src/
+            diagnostics.txt
