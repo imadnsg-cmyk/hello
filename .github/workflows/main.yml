@@ -1,4 +1,4 @@
-name: macOS App Pull & Windows Vision Verification Loop
+name: Ubuntu Bundle & Windows Vision Verification Loop
 
 on:
   workflow_dispatch:
@@ -7,44 +7,48 @@ on:
       - '.github/workflows/main.yml'
 
 jobs:
-  pull-from-macos:
-    runs-on: macos-latest
+  prepare-on-ubuntu:
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Pull a sample app bundle from macOS
+      - name: Create sample bundle on Ubuntu
         run: |
-          mkdir -p pulled_bundle
-          SRC_APP="/System/Applications/Calculator.app"
-          if [ ! -d "$SRC_APP" ]; then
-            SRC_APP=$(find /Applications /System/Applications -maxdepth 2 -name "*.app" 2>/dev/null | head -n 1)
-          fi
-          echo "Selected app: $SRC_APP" > pulled_bundle/info.txt
-          ditto -c -k --sequesterRsrc --keepParent "$SRC_APP" pulled_bundle/macos_app.zip
+          mkdir -p bundle_src pulled_bundle
+          cat << 'EOF' > bundle_src/app_manifest.json
+          {
+            "source_os": "ubuntu-latest",
+            "sample_app": "demo_package",
+            "entry": "start.sh"
+          }
+          EOF
+          echo "echo Running demo package on Linux" > bundle_src/start.sh
+          chmod +x bundle_src/start.sh
+          zip -r pulled_bundle/ubuntu_bundle.zip bundle_src
           ls -lh pulled_bundle/
 
-      - name: Upload pulled macOS bundle
+      - name: Upload Ubuntu bundle artifact
         uses: actions/upload-artifact@v4
         with:
-          name: macos-pulled-bundle
+          name: ubuntu-pulled-bundle
           path: pulled_bundle/
 
   win-vision-loop:
-    needs: pull-from-macos
+    needs: prepare-on-ubuntu
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
-      - name: Download macOS bundle
+      - name: Download bundle on Windows
         uses: actions/download-artifact@v4
         with:
-          name: macos-pulled-bundle
+          name: ubuntu-pulled-bundle
           path: pulled_bundle
 
       - name: Install Ollama and extract bundle on Windows
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path workdir, reports | Out-Null
-          if (Test-Path "pulled_bundle\macos_app.zip") {
-            Expand-Archive -Path "pulled_bundle\macos_app.zip" -DestinationPath "workdir\extracted" -Force
+          if (Test-Path "pulled_bundle\ubuntu_bundle.zip") {
+            Expand-Archive -Path "pulled_bundle\ubuntu_bundle.zip" -DestinationPath "workdir\extracted" -Force
           }
           Get-ChildItem "workdir\extracted" -Recurse -ErrorAction SilentlyContinue |
             Select-Object -First 40 FullName, Length |
@@ -72,7 +76,7 @@ jobs:
           "TEXT_MODEL=$chosenModel" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "VISION_MODEL=$visionModel" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Run unpack, patch attempt, screenshot, and vision check loop
+      - name: Run inspection, screenshot, and vision check loop
         shell: pwsh
         run: |
           $scriptCode = @'
@@ -102,16 +106,6 @@ jobs:
               $aiText = "Model call error: $($_.Exception.Message)"
             }
             $aiText | Out-File -FilePath $patchNotePath -Encoding utf8
-
-            $execLog = "reports\exec_$cycleTag.log"
-            $exeCandidate = Get-ChildItem "workdir\extracted" -Include *.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($exeCandidate) {
-              Start-Process -FilePath $exeCandidate.FullName -ErrorAction SilentlyContinue
-              Start-Sleep -Seconds 2
-              "Attempted launching: $($exeCandidate.FullName)" | Out-File -FilePath $execLog -Encoding utf8
-            } else {
-              "No Windows .exe inside extracted macOS bundle; verified extracted structure." | Out-File -FilePath $execLog -Encoding utf8
-            }
 
             $shotPath = "reports\shot_$cycleTag.png"
             $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
