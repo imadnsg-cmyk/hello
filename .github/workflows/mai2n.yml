@@ -1,288 +1,234 @@
-name: Multi-Attempt Emoji Render & PDF Comparison
+name: Verify Apple SBIX Emojis & Render Comparison
 
 on:
   workflow_dispatch:
   push:
     paths:
-      - '.github/workflows/emoji-multi-attempt.yml'
+      - '.github/workflows/emoji-sbix-verify.yml'
 
 jobs:
-  compare-emojis:
+  verify-and-render:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Prepare fonts directory & diagnostics log
+      - name: Prepare workspace & diagnostics log
         run: |
-          mkdir -p ~/.local/share/fonts
-          echo "=== Diagnostics Log ===" > diagnostics.txt
+          mkdir -p ~/.local/share/fonts sbix_out
+          echo "=== SBIX Verification Log ===" > diagnostics.txt
           date -u >> diagnostics.txt
 
-      - name: "Attempt 1: Download fonts with multiple fallbacks"
+      - name: Download AppleEmoji.ttf with fallbacks
         run: |
           {
-            echo "--- Downloading Apple Emoji Font (with fallbacks) ---"
-            curl -fL -sS --max-time 45 -o ~/.local/share/fonts/AppleEmoji.ttf \
+            echo "[$(date -u +%H:%M:%S)] Downloading AppleEmoji.ttf..."
+            curl -fL -sS --max-time 60 -o ~/.local/share/fonts/AppleEmoji.ttf \
               "https://github.com/samuelngs/apple-emoji-linux/releases/latest/download/AppleColorEmoji.ttf" \
-              || curl -fL -sS --max-time 45 -o ~/.local/share/fonts/AppleEmoji.ttf \
+              || curl -fL -sS --max-time 60 -o ~/.local/share/fonts/AppleEmoji.ttf \
               "https://github.com/samuelngs/apple-emoji-ttf/releases/latest/download/AppleColorEmoji-Linux.ttf" \
-              || curl -fL -sS --max-time 45 -o ~/.local/share/fonts/AppleEmoji.ttf \
-              "https://raw.githubusercontent.com/samuelngs/apple-emoji-linux/master/AppleColorEmoji.ttf" \
-              || echo "WARN: Could not download AppleEmoji.ttf from fallback URLs"
-
-            echo "--- Downloading Noto Emoji Font (with fallbacks) ---"
-            curl -fL -sS --max-time 45 -o ~/.local/share/fonts/NotoColorEmoji.ttf \
-              "https://github.com/googlefonts/noto-emoji/raw/main/fonts/NotoColorEmoji.ttf" \
-              || curl -fL -sS --max-time 45 -o ~/.local/share/fonts/NotoColorEmoji.ttf \
-              "https://raw.githubusercontent.com/googlefonts/noto-emoji/main/fonts/NotoColorEmoji.ttf" \
-              || echo "WARN: Could not download NotoColorEmoji.ttf from fallback URLs"
-
-            ls -lh ~/.local/share/fonts/
+              || curl -fL -sS --max-time 60 -o ~/.local/share/fonts/AppleEmoji.ttf \
+              "https://raw.githubusercontent.com/samuelngs/apple-emoji-linux/master/AppleColorEmoji.ttf"
+            ls -lh ~/.local/share/fonts/AppleEmoji.ttf
             fc-cache -fv
-            fc-list | grep -iE "apple|noto|emoji" || true
           } >> diagnostics.txt 2>&1
           cat diagnostics.txt
 
-      - name: "Attempt 1 & 2: Build HTML comparison page"
+      - name: "Extract real PNGs directly from AppleEmoji sbix table"
         run: |
-          cat << 'EOF' > compare.html
-          <!DOCTYPE html>
+          echo "[$(date -u +%H:%M:%S)] Installing fonttools & pillow..."
+          python3 -m pip install -q fonttools pillow
+
+          echo "[$(date -u +%H:%M:%S)] Extracting sbix glyphs..."
+          python3 - << 'EOF'
+          import os, struct
+          from fontTools.ttLib import TTFont
+
+          font_path = os.path.expanduser("~/.local/share/fonts/AppleEmoji.ttf")
+          tt = TTFont(font_path, fontNumber=0)
+          cmap = tt.getBestCmap()
+          sbix = tt["sbix"]
+
+          # Choose largest strike available (e.g., 160px)
+          strikes = sorted(sbix.strikes.items(), key=lambda kv: kv[0], reverse=True)
+          print("Available sbix strikes (ppem):", [k for k, _ in strikes])
+          ppem, strike = strikes[0]
+          print(f"Using strike ppem={ppem}")
+
+          targets = {
+              "rocket": 0x1F680,      # 🚀
+              "fire": 0x1F525,        # 🔥
+              "joy": 0x1F602,         # 😂
+              "pleading": 0x1F97A,    # 🥺
+              "heart": 0x2764,        # ❤️
+              "sparkles": 0x2728,    # ✨
+              "crown": 0x1F451,       # 👑
+              "camera": 0x1F4F8,      # 📸
+              "party": 0x1F973,       # 🥳
+              "cry": 0x1F62D,         # 😭
+              "mindblown": 0x1F92F,   # 🤯
+          }
+
+          extracted = []
+          for name, cp in targets.items():
+              glyph_name = cmap.get(cp)
+              if not glyph_name or glyph_name not in strike.glyphs:
+                  print(f"Missing glyph for {name} (U+{cp:X}): {glyph_name}")
+                  continue
+              g = strike.glyphs[glyph_name]
+              data = g.imageData
+              if not data:
+                  print(f"Empty imageData for {name} ({glyph_name})")
+                  continue
+
+              # sbix Glyph data has an 8-byte header (originOffsetX, originOffsetY, graphicType) followed by image bytes
+              if len(data) > 8 and data[8:12] == b"\x89PNG":
+                  img_bytes = data[8:]
+                  ext = "png"
+              elif data[:4] == b"\x89PNG":
+                  img_bytes = data
+                  ext = "png"
+              else:
+                  # Fallback: search PNG signature inside bytes
+                  idx = data.find(b"\x89PNG")
+                  if idx != -1:
+                      img_bytes = data[idx:]
+                      ext = "png"
+                  else:
+                      print(f"Non-PNG or unknown format for {name}, len={len(data)}")
+                      continue
+
+              out_file = f"sbix_out/{name}.{ext}"
+              with open(out_file, "wb") as f:
+                  f.write(img_bytes)
+              extracted.append((name, chr(cp), f"{name}.{ext}", len(img_bytes)))
+              print(f"Extracted {out_file} ({len(img_bytes)} bytes) for {chr(cp)}")
+
+          with open("diagnostics.txt", "a") as log:
+              log.write(f"\nSBIX strike used: {ppem}\nExtracted count: {len(extracted)}\n")
+              for item in extracted:
+                  log.write(f"  - {item}\n")
+
+          # Build HTML comparing raw sbix extracted images vs Linux system Noto render
+          rows_html = "\n".join(
+              f'<div class="cell"><img src="sbix_out/{fname}" alt="{ch}"><div class="cap">{ch} ({name})</div></div>'
+              for name, ch, fname, _ in extracted
+          )
+          all_chars = "".join(ch for _, ch, _, _ in extracted)
+
+          html = f"""<!DOCTYPE html>
           <html lang="ar" dir="rtl">
           <head>
           <meta charset="UTF-8">
           <style>
-            @font-face {
-              font-family: 'AppleCustom';
-              src: url('file:///home/runner/.local/share/fonts/AppleEmoji.ttf') format('truetype');
-            }
-            @font-face {
-              font-family: 'NotoCustom';
-              src: url('file:///home/runner/.local/share/fonts/NotoColorEmoji.ttf') format('truetype');
-            }
-            * { box-sizing: border-box; }
-            body {
+            body {{
               font-family: system-ui, -apple-system, sans-serif;
-              background: #0f1115;
+              background: #0d1015;
               color: #f3f4f6;
               padding: 32px;
               margin: 0;
-            }
-            h1 { font-size: 22px; margin-bottom: 20px; color: #fff; }
-            .box {
-              background: #181b22;
-              border: 1px solid #2b303c;
-              border-radius: 14px;
-              padding: 20px;
-              margin-bottom: 18px;
-            }
-            .label { font-size: 14px; color: #9ca3af; margin-bottom: 10px; }
-            .sample-apple {
-              font-family: 'AppleCustom', 'Apple Color Emoji', sans-serif;
-              font-size: 42px;
+            }}
+            .card {{
+              background: #171b22;
+              border: 1px solid #2a303c;
+              border-radius: 16px;
+              padding: 24px;
+              margin-bottom: 24px;
+            }}
+            h2 {{ margin: 0 0 14px 0; font-size: 18px; color: #e5e7eb; }}
+            .hint {{ font-size: 13px; color: #9ca3af; margin-bottom: 16px; }}
+            .grid {{
+              display: flex;
+              flex-wrap: wrap;
+              gap: 16px;
+            }}
+            .cell {{
+              background: #10141a;
+              border: 1px solid #252b36;
+              border-radius: 12px;
+              padding: 12px;
+              width: 110px;
+              text-align: center;
+            }}
+            .cell img {{
+              width: 72px;
+              height: 72px;
+              object-fit: contain;
+            }}
+            .cap {{
+              margin-top: 8px;
+              font-size: 12px;
+              color: #cbd5e1;
+            }}
+            .noto-box {{
+              font-size: 46px;
               line-height: 1.6;
-            }
-            .sample-noto {
-              font-family: 'NotoCustom', 'Noto Color Emoji', sans-serif;
-              font-size: 42px;
-              line-height: 1.6;
-            }
-            .twemoji-row img {
-              width: 42px;
-              height: 42px;
-              vertical-align: middle;
-              margin: 0 2px;
-            }
-            .twemoji-row span.txt {
-              font-size: 32px;
-              vertical-align: middle;
-              margin-left: 8px;
-            }
+              padding: 10px 0;
+            }}
           </style>
           </head>
           <body>
-            <h1>مقارنة رندر النصوص والإيموجي (محاولات متعددة)</h1>
-
-            <div class="box">
-              <div class="label">المحاولة 1 / أ: خط AppleCustom (ملف محلي)</div>
-              <div class="sample-apple">مرحباً يا إيماد 🚀🔥😂🥺❤️✨👑📸🥳😭🤯</div>
-            </div>
-
-            <div class="box">
-              <div class="label">المحاولة 1 / ب: خط NotoCustom (ملف محلي)</div>
-              <div class="sample-noto">مرحباً يا إيماد 🚀🔥😂🥺❤️✨👑📸🥳😭🤯</div>
-            </div>
-
-            <div class="box">
-              <div class="label">المحاولة 3: مرجع Twemoji بصري مباشر</div>
-              <div class="twemoji-row">
-                <span class="txt">مرحباً يا إيماد</span>
-                <img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f680.svg" alt="🚀">
-                <img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f525.svg" alt="🔥">
-                <img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f602.svg" alt="😂">
-                <img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f97a.svg" alt="🥺">
-                <img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/2764.svg" alt="❤️">
-                <img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/2728.svg" alt="✨">
-                <img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f451.svg" alt="👑">
-                <img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f4f8.svg" alt="📸">
+            <div class="card">
+              <h2>1. إيموجي أبل الحقيقي المستخرج مباشرة من جدول sbix داخل ملف الـ 111MB</h2>
+              <div class="hint">هذه صور PNG حقيقية استُخرجت من داخل ملف الخط نفسه دون الاعتماد على رندر المتصفح للخط</div>
+              <div class="grid">
+                {rows_html}
               </div>
+            </div>
+
+            <div class="card">
+              <h2>2. نفس الإيموجي برندر نظام لينكس الافتراضي (Noto Color Emoji) للمقارنة</h2>
+              <div class="noto-box">{all_chars}</div>
             </div>
           </body>
           </html>
+          """
+          with open("sbix_compare.html", "w", encoding="utf-8") as f:
+              f.write(html)
+          print("sbix_compare.html generated.")
           EOF
-          echo "compare.html created successfully."
 
-      - name: "Install Playwright & Browsers"
+      - name: Render SBIX comparison PNG & PDF with progress logs
         run: |
-          echo "[$(date -u +%H:%M:%S)] Installing playwright package..."
+          echo "[$(date -u +%H:%M:%S)] Installing playwright & chromium..."
           npm init -y >/dev/null 2>&1
           npm install playwright >/dev/null 2>&1
-          echo "[$(date -u +%H:%M:%S)] Installing Chromium..."
           npx playwright install chromium --with-deps >/dev/null 2>&1
-          echo "[$(date -u +%H:%M:%S)] Installing Firefox..."
-          npx playwright install firefox --with-deps >/dev/null 2>&1
-          echo "[$(date -u +%H:%M:%S)] Browsers installation complete."
 
-      - name: "Attempt 1 (Chromium) & Attempt 2 (Firefox) Render"
-        run: |
-          cat << 'EOF' > run_attempts.js
-          const { chromium, firefox } = require('playwright');
+          cat << 'EOF' > render_sbix.js
+          const { chromium } = require('playwright');
           const path = require('path');
           const fs = require('fs');
 
-          const startAll = Date.now();
-          const elapsed = () => `+${((Date.now() - startAll) / 1000).toFixed(1)}s`;
-
-          function progress(msg) {
-            const line = `[${elapsed()}] ${msg}`;
+          const t0 = Date.now();
+          const p = (msg) => {
+            const line = `[+${((Date.now() - t0) / 1000).toFixed(1)}s] ${msg}`;
             console.log(line);
             fs.appendFileSync('diagnostics.txt', line + '\n');
-          }
-
-          async function withTimeout(promise, ms, label) {
-            let timer;
-            const timeoutPromise = new Promise((_, reject) => {
-              timer = setTimeout(() => reject(new Error(`Timeout after ${ms}ms during: ${label}`)), ms);
-            });
-            try {
-              return await Promise.race([promise, timeoutPromise]);
-            } finally {
-              clearTimeout(timer);
-            }
-          }
-
-          async function runEngine(engineName, browserType, prefix) {
-            progress(`========== START ${engineName} ==========`);
-            let browser;
-            try {
-              progress(`${engineName}: launching browser...`);
-              browser = await withTimeout(
-                browserType.launch({ headless: true }),
-                30000,
-                `${engineName} launch`
-              );
-              progress(`${engineName}: browser launched.`);
-
-              const context = await browser.newContext({ deviceScaleFactor: 2 });
-              const page = await context.newPage();
-              page.setDefaultTimeout(20000);
-
-              progress(`${engineName}: opening compare.html (domcontentloaded)...`);
-              await withTimeout(
-                page.goto('file://' + path.resolve('compare.html'), { waitUntil: 'domcontentloaded', timeout: 20000 }),
-                25000,
-                `${engineName} page.goto`
-              );
-              progress(`${engineName}: DOM loaded. Waiting for fonts & external assets (up to 12s)...`);
-
-              await Promise.race([
-                page.evaluate(async () => { await document.fonts.ready; }),
-                new Promise(r => setTimeout(r, 12000))
-              ]);
-
-              const fontInfo = await page.evaluate(() =>
-                [...document.fonts].map(f => `${f.family} [${f.status}]`)
-              );
-              progress(`${engineName}: fonts check -> ${JSON.stringify(fontInfo)}`);
-
-              progress(`${engineName}: capturing screenshot ${prefix}.png...`);
-              await withTimeout(
-                page.screenshot({ path: `${prefix}.png`, fullPage: true, animations: 'disabled' }),
-                25000,
-                `${engineName} screenshot`
-              );
-              progress(`${engineName}: saved ${prefix}.png.`);
-
-              if (typeof page.pdf === 'function') {
-                progress(`${engineName}: generating PDF ${prefix}.pdf...`);
-                await withTimeout(
-                  page.pdf({ path: `${prefix}.pdf`, format: 'A4', printBackground: true }),
-                  25000,
-                  `${engineName} pdf`
-                );
-                progress(`${engineName}: saved ${prefix}.pdf.`);
-              } else {
-                progress(`${engineName}: page.pdf not supported on this engine.`);
-              }
-
-            } catch (err) {
-              progress(`${engineName}: ERROR -> ${err.message}`);
-            } finally {
-              if (browser) {
-                progress(`${engineName}: closing browser...`);
-                await browser.close().catch(() => {});
-                progress(`${engineName}: browser closed.`);
-              }
-              progress(`========== END ${engineName} ==========`);
-            }
-          }
+          };
 
           (async () => {
-            progress('Starting render pipeline...');
-            await runEngine('Chromium (Attempt 1)', chromium, 'attempt1-chromium');
-            await runEngine('Firefox (Attempt 2)', firefox, 'attempt2-firefox');
-            progress('Render pipeline finished.');
+            p('Launching Chromium...');
+            const browser = await chromium.launch({ headless: true });
+            const page = await browser.newPage({ deviceScaleFactor: 2 });
+            p('Opening sbix_compare.html...');
+            await page.goto('file://' + path.resolve('sbix_compare.html'), { waitUntil: 'load', timeout: 20000 });
+            p('Taking screenshot sbix-extracted-comparison.png...');
+            await page.screenshot({ path: 'sbix-extracted-comparison.png', fullPage: true });
+            p('Generating PDF sbix-extracted-comparison.pdf...');
+            await page.pdf({ path: 'sbix-extracted-comparison.pdf', format: 'A4', printBackground: true });
+            await browser.close();
+            p('Done!');
           })();
           EOF
 
-          node --unhandled-rejections=warn run_attempts.js
+          node render_sbix.js
 
-      - name: "Attempt 3: Convert PNG to PDF fallback if needed"
-        if: always()
-        run: |
-          echo "[$(date -u +%H:%M:%S)] Checking PDF fallbacks..."
-          python3 - << 'EOF'
-          import os, subprocess, sys
-
-          try:
-              from PIL import Image
-          except ImportError:
-              print("PIL not found, installing pillow...")
-              subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "pillow"])
-              from PIL import Image
-
-          for base in ['attempt1-chromium', 'attempt2-firefox']:
-              png_path = f'{base}.png'
-              pdf_path = f'{base}.pdf'
-              if os.path.exists(png_path) and not os.path.exists(pdf_path):
-                  img = Image.open(png_path).convert('RGB')
-                  img.save(pdf_path)
-                  msg = f'Fallback generated {pdf_path} from {png_path}'
-                  print(msg)
-                  with open('diagnostics.txt', 'a') as f:
-                      f.write(msg + '\n')
-              elif os.path.exists(pdf_path):
-                  print(f"{pdf_path} already exists.")
-              else:
-                  print(f"No {png_path} found to convert.")
-          EOF
-
-      - name: "Upload All Attempt Outputs"
+      - name: Upload SBIX Verification Outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: emoji-comparison-results
+          name: sbix-emoji-verification
           path: |
-            attempt1-chromium.png
-            attempt1-chromium.pdf
-            attempt2-firefox.png
-            attempt2-firefox.pdf
+            sbix-extracted-comparison.png
+            sbix-extracted-comparison.pdf
+            sbix_out/
             diagnostics.txt
