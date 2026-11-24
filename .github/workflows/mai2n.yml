@@ -25,25 +25,25 @@ jobs:
             python3 -m venv .venv
             .venv/bin/pip install -q pillow
             .venv/bin/python - << 'EOF'
-import platform, subprocess
-from PIL import Image, ImageDraw
+          import platform, subprocess
+          from PIL import Image, ImageDraw
 
-sw = subprocess.getoutput("sw_vers").replace("\n", " | ")
-lines = [
-    "GitHub Actions macOS Runner",
-    sw,
-    platform.platform(),
-    "Display: Headless Runner"
-]
-img = Image.new("RGB", (1280, 720), (15, 23, 42))
-draw = ImageDraw.Draw(img)
-y = 120
-for idx, line in enumerate(lines):
-    color = (56, 189, 248) if idx == 0 else (226, 232, 240)
-    draw.text((80, y), line, fill=color)
-    y += 65
-img.save("macos-runner-screenshot.png", "PNG")
-EOF
+          sw = subprocess.getoutput("sw_vers").replace("\n", " | ")
+          lines = [
+              "GitHub Actions macOS Runner",
+              sw,
+              platform.platform(),
+              "Display: Headless Runner"
+          ]
+          img = Image.new("RGB", (1280, 720), (15, 23, 42))
+          draw = ImageDraw.Draw(img)
+          y = 120
+          for idx, line in enumerate(lines):
+              color = (56, 189, 248) if idx == 0 else (226, 232, 240)
+              draw.text((80, y), line, fill=color)
+              y += 65
+          img.save("macos-runner-screenshot.png", "PNG")
+          EOF
           fi
 
       - name: Upload PNG
