@@ -1,205 +1,28 @@
-name: Multi-Attempt Emoji Render & PDF Comparison
+name: Windows Latest QEMU VM Runner
 
 on:
   workflow_dispatch:
   push:
     paths:
-      - '.github/workflows/emoji-multi-attempt.yml'
+      - '.github/workflows/win-qemu-vm.yml'
 
 jobs:
-  compare-emojis:
-    runs-on: ubuntu-latest
+  win-vm:
+    runs-on: windows-latest
+    timeout-minutes: 15
     steps:
-      - name: Prepare fonts directory & diagnostics log
+      - name: Install QEMU on Windows runner
+        shell: pwsh
         run: |
-          mkdir -p ~/.local/share/fonts
-          echo "=== Diagnostics Log ===" > diagnostics.txt
-          date -u >> diagnostics.txt
-
-      - name: "Attempt 1: Download fonts with multiple fallbacks"
-        run: |
-          {
-            echo "--- Downloading Apple Emoji Font (with fallbacks) ---"
-            curl -fL -sS -o ~/.local/share/fonts/AppleEmoji.ttf \
-              "https://github.com/samuelngs/apple-emoji-linux/releases/latest/download/AppleColorEmoji.ttf" \
-              || curl -fL -sS -o ~/.local/share/fonts/AppleEmoji.ttf \
-              "https://github.com/samuelngs/apple-emoji-ttf/releases/latest/download/AppleColorEmoji-Linux.ttf" \
-              || curl -fL -sS -o ~/.local/share/fonts/AppleEmoji.ttf \
-              "https://raw.githubusercontent.com/samuelngs/apple-emoji-linux/master/AppleColorEmoji.ttf" \
-              || echo "WARN: Could not download AppleEmoji.ttf from fallback URLs"
-
-            echo "--- Downloading Noto Emoji Font (with fallbacks) ---"
-            curl -fL -sS -o ~/.local/share/fonts/NotoColorEmoji.ttf \
-              "https://github.com/googlefonts/noto-emoji/raw/main/fonts/NotoColorEmoji.ttf" \
-              || curl -fL -sS -o ~/.local/share/fonts/NotoColorEmoji.ttf \
-              "https://raw.githubusercontent.com/googlefonts/noto-emoji/main/fonts/NotoColorEmoji.ttf" \
-              || echo "WARN: Could not download NotoColorEmoji.ttf from fallback URLs"
-
-            ls -lh ~/.local/share/fonts/
-            fc-cache -fv
-            fc-list | grep -iE "apple|noto|emoji" || true
-          } >> diagnostics.txt 2>&1
-
-      - name: "Attempt 1 & 2: Build HTML comparison page"
-        run: |
-          cat << 'EOF' > compare.html
-          <!DOCTYPE html>
-          <html lang="ar" dir="rtl">
-          <head>
-          <meta charset="UTF-8">
-          <style>
-            @font-face {
-              font-family: 'AppleCustom';
-              src: url('file:///home/runner/.local/share/fonts/AppleEmoji.ttf') format('truetype');
-            }
-            @font-face {
-              font-family: 'NotoCustom';
-              src: url('file:///home/runner/.local/share/fonts/NotoColorEmoji.ttf') format('truetype');
-            }
-            * { box-sizing: border-box; }
-            body {
-              font-family: system-ui, -apple-system, sans-serif;
-              background: #0f1115;
-              color: #f3f4f6;
-              padding: 32px;
-              margin: 0;
-            }
-            h1 { font-size: 22px; margin-bottom: 20px; color: #fff; }
-            .box {
-              background: #181b22;
-              border: 1px solid #2b303c;
-              border-radius: 14px;
-              padding: 20px;
-              margin-bottom: 18px;
-            }
-            .label { font-size: 14px; color: #9ca3af; margin-bottom: 10px; }
-            .sample-apple {
-              font-family: 'AppleCustom', 'Apple Color Emoji', sans-serif;
-              font-size: 42px;
-              line-height: 1.6;
-            }
-            .sample-noto {
-              font-family: 'NotoCustom', 'Noto Color Emoji', sans-serif;
-              font-size: 42px;
-              line-height: 1.6;
-            }
-            .twemoji-row img {
-              width: 42px;
-              height: 42px;
-              vertical-align: middle;
-              margin: 0 2px;
-            }
-            .twemoji-row span.txt {
-              font-size: 32px;
-              vertical-align: middle;
-              margin-left: 8px;
-            }
-          </style>
-          </head>
-          <body>
-            <h1>مقارنة رندر النصوص والإيموجي (محاولات متعددة)</h1>
-
-            <div class="box">
-              <div class="label">المحاولة 1 / أ: خط AppleCustom (ملف محلي)</div>
-              <div class="sample-apple">مرحباً يا إيماد 🚀🔥😂🥺❤️✨👑📸🥳😭🤯</div>
-            </div>
-
-            <div class="box">
-              <div class="label">المحاولة 1 / ب: خط NotoCustom (ملف محلي)</div>
-              <div class="sample-noto">مرحباً يا إيماد 🚀🔥😂🥺❤️✨👑📸🥳😭🤯</div>
-            </div>
-
-            <div class="box">
-              <div class="label">المحاولة 3: مرجع Twemoji بصري مباشر</div>
-              <div class="twemoji-row">
-                <span class="txt">مرحباً يا إيماد</span>
-                <img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f680.svg" alt="🚀">
-                <img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f525.svg" alt="🔥">
-                <img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f602.svg" alt="😂">
-                <img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f97a.svg" alt="🥺">
-                <img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/2764.svg" alt="❤️">
-                <img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/2728.svg" alt="✨">
-                <img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f451.svg" alt="👑">
-                <img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f4f8.svg" alt="📸">
-              </div>
-            </div>
-          </body>
-          </html>
-          EOF
-
-      - name: "Install Playwright & Browsers"
-        run: |
-          npm init -y >/dev/null 2>&1
-          npm install playwright >/dev/null 2>&1
-          npx playwright install chromium firefox >/dev/null 2>&1
-
-      - name: "Attempt 1 (Chromium) & Attempt 2 (Firefox) Render"
-        run: |
-          cat << 'EOF' > run_attempts.js
-          const { chromium, firefox } = require('playwright');
-          const path = require('path');
-          const fs = require('fs');
-
-          async function runEngine(engineName, browserType, prefix) {
-            let log = `\n=== ${engineName} ===\n`;
-            try {
-              const browser = await browserType.launch();
-              const page = await browser.newPage({ deviceScaleFactor: 2 });
-              await page.goto('file://' + path.resolve('compare.html'), { waitUntil: 'networkidle', timeout: 30000 });
-              await page.evaluate(async () => { await document.fonts.ready; });
-
-              const fontInfo = await page.evaluate(() =>
-                [...document.fonts].map(f => `${f.family} [${f.status}]`)
-              );
-              log += 'Loaded fonts: ' + JSON.stringify(fontInfo) + '\n';
-
-              await page.screenshot({ path: `${prefix}.png`, fullPage: true });
-              log += `Saved ${prefix}.png\n`;
-
-              if (typeof page.pdf === 'function') {
-                await page.pdf({ path: `${prefix}.pdf`, format: 'A4', printBackground: true });
-                log += `Saved ${prefix}.pdf\n`;
-              } else {
-                log += `Note: page.pdf not supported on ${engineName} in this mode\n`;
-              }
-
-              await browser.close();
-            } catch (err) {
-              log += `ERROR in ${engineName}: ${err.message}\n`;
-            }
-            fs.appendFileSync('diagnostics.txt', log);
+          winget install --id SoftwareFreedomConservancy.QEMU -e --silent --accept-package-agreements --accept-source-agreements
+          $qemuDir = "C:\Program Files\qemu"
+          if (Test-Path $qemuDir) {
+            "C:\Program Files\qemu" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           }
 
-          (async () => {
-            await runEngine('Chromium (Attempt 1)', chromium, 'attempt1-chromium');
-            await runEngine('Firefox (Attempt 2)', firefox, 'attempt2-firefox');
-          })();
-          EOF
-          node run_attempts.js
-
-      - name: "Attempt 3: Convert PNG to PDF fallback if needed"
+      - name: Verify QEMU VM capability
+        shell: pwsh
         run: |
-          python3 - << 'EOF'
-          import os
-          from PIL import Image
-
-          for base in ['attempt1-chromium', 'attempt2-firefox']:
-              png_path = f'{base}.png'
-              pdf_path = f'{base}.pdf'
-              if os.path.exists(png_path) and not os.path.exists(pdf_path):
-                  img = Image.open(png_path).convert('RGB')
-                  img.save(pdf_path)
-                  with open('diagnostics.txt', 'a') as f:
-                      f.write(f'Fallback generated {pdf_path} from {png_path}\n')
-          EOF
-
-      - name: "Upload All Attempt Outputs"
-        uses: actions/upload-artifact@v4
-        with:
-          name: emoji-comparison-results
-          path: |
-            attempt1-chromium.png
-            attempt1-chromium.pdf
-            attempt2-firefox.png
-            attempt2-firefox.pdf
-            diagnostics.txt
+          qemu-system-x86_64.exe --version
+          qemu-img.exe create -f qcow2 vm_disk.qcow2 20G
+          Get-Item vm_disk.qcow2 | Select-Object Name, Length
