@@ -16,17 +16,24 @@ jobs:
           echo "=== Diagnostics Log ===" > diagnostics.txt
           date -u >> diagnostics.txt
 
-      - name: "Attempt 1: Download fonts & verify sizes"
+      - name: "Attempt 1: Download fonts with multiple fallbacks"
         run: |
           {
-            echo "--- Attempt 1: Downloading Fonts ---"
-            curl -fL -o ~/.local/share/fonts/AppleColorEmoji-Linux.ttf \
+            echo "--- Downloading Apple Emoji Font (with fallbacks) ---"
+            curl -fL -sS -o ~/.local/share/fonts/AppleEmoji.ttf \
+              "https://github.com/samuelngs/apple-emoji-linux/releases/latest/download/AppleColorEmoji.ttf" \
+              || curl -fL -sS -o ~/.local/share/fonts/AppleEmoji.ttf \
               "https://github.com/samuelngs/apple-emoji-ttf/releases/latest/download/AppleColorEmoji-Linux.ttf" \
-              || curl -fL -o ~/.local/share/fonts/AppleColorEmoji-Linux.ttf \
-              "https://github.com/samuelngs/apple-emoji-linux/releases/latest/download/AppleColorEmoji.ttf"
+              || curl -fL -sS -o ~/.local/share/fonts/AppleEmoji.ttf \
+              "https://raw.githubusercontent.com/samuelngs/apple-emoji-linux/master/AppleColorEmoji.ttf" \
+              || echo "WARN: Could not download AppleEmoji.ttf from fallback URLs"
 
-            curl -fL -o ~/.local/share/fonts/NotoColorEmoji.ttf \
-              "https://github.com/googlefonts/noto-emoji/raw/main/fonts/NotoColorEmoji.ttf"
+            echo "--- Downloading Noto Emoji Font (with fallbacks) ---"
+            curl -fL -sS -o ~/.local/share/fonts/NotoColorEmoji.ttf \
+              "https://github.com/googlefonts/noto-emoji/raw/main/fonts/NotoColorEmoji.ttf" \
+              || curl -fL -sS -o ~/.local/share/fonts/NotoColorEmoji.ttf \
+              "https://raw.githubusercontent.com/googlefonts/noto-emoji/main/fonts/NotoColorEmoji.ttf" \
+              || echo "WARN: Could not download NotoColorEmoji.ttf from fallback URLs"
 
             ls -lh ~/.local/share/fonts/
             fc-cache -fv
@@ -43,7 +50,7 @@ jobs:
           <style>
             @font-face {
               font-family: 'AppleCustom';
-              src: url('file:///home/runner/.local/share/fonts/AppleColorEmoji-Linux.ttf') format('truetype');
+              src: url('file:///home/runner/.local/share/fonts/AppleEmoji.ttf') format('truetype');
             }
             @font-face {
               font-family: 'NotoCustom';
@@ -103,7 +110,7 @@ jobs:
             </div>
 
             <div class="box">
-              <div class="label">المحاولة 3: مرجع Twemoji بصري مباشر (للتأكد من وضوح الفروقات البصرية)</div>
+              <div class="label">المحاولة 3: مرجع Twemoji بصري مباشر</div>
               <div class="twemoji-row">
                 <span class="txt">مرحباً يا إيماد</span>
                 <img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f680.svg" alt="🚀">
