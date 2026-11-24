@@ -1,26 +1,24 @@
-name: Dump Native Apple Emoji from macOS Without Assumptions
+name: Inspect 2026 Apple Emojis & Reverse Font Structure
 
 on:
   workflow_dispatch:
   push:
     paths:
-      - '.github/workflows/dump-macos-emoji.yml'
+      - '.github/workflows/inspect-apple-2026-mod.yml'
 
 jobs:
-  dump-emoji:
+  inspect-reverse:
     runs-on: macos-latest
     timeout-minutes: 10
     steps:
       - name: Prepare workspace & log
         run: |
-          mkdir -p apple_macos_emojis
-          echo "=== macOS Emoji Dump Log ===" > diagnostics.txt
+          mkdir -p new_emojis_2026
+          echo "=== Apple Emoji 2026 & Reverse Inspection ===" > diagnostics.txt
           date -u >> diagnostics.txt
-          sw_vers >> diagnostics.txt 2>&1 || true
 
-      - name: "Inspect font directly & extract emojis"
+      - name: Inspect TTC & extract new 2026 emojis
         run: |
-          echo "[$(date -u +%H:%M:%S)] Creating venv & installing fonttools & pillow..."
           python3 -m venv .venv
           source .venv/bin/activate
           python3 -m pip install -q --upgrade pip
@@ -39,149 +37,108 @@ jobs:
                   f.write(line + "\n")
 
           ttc_path = "/System/Library/Fonts/Apple Color Emoji.ttc"
-          log(f"Target path: {ttc_path} | exists={os.path.exists(ttc_path)}")
-          if os.path.exists(ttc_path):
-              log(f"File size: {os.path.getsize(ttc_path)} bytes")
-
           tt = TTFont(ttc_path, fontNumber=0)
-          tables = list(tt.keys())
-          log(f"Tables reported by TTFont ({len(tables)}): {tables}")
+          cmap = tt.getBestCmap() or {}
 
-          if "name" in tt:
-              name_records = []
-              for rec in tt["name"].names[:12]:
-                  try:
-                      val = rec.toUnicode()
-                  except Exception:
-                      val = str(rec.string)
-                  name_records.append(f"({rec.nameID}): {val}")
-              log("Sample name table entries: " + " | ".join(name_records))
-
-          emojis = [
-              ("rocket",    0x1F680), # 🚀
-              ("fire",      0x1F525), # 🔥
-              ("joy",       0x1F602), # 😂
-              ("rofl",      0x1F923), # 🤣
-              ("pleading",  0x1F97A), # 🥺
-              ("heart",     0x2764),  # ❤️
-              ("sparkles",  0x2728),  # ✨
-              ("crown",     0x1F451), # 👑
-              ("camera",    0x1F4F8), # 📸
-              ("party",     0x1F973), # 🥳
-              ("cry",       0x1F62D), # 😭
-              ("mindblown", 0x1F92F), # 🤯
-              ("love_eyes", 0x1F60D), # 😍
-              ("sunglass",  0x1F60E), # 😎
-              ("skull",     0x1F480), # 💀
-              ("hundred",   0x1F4AF), # 💯
+          new_2026 = [
+              ("distorted_face", 0x1FAE9),
+              ("fight_cloud",    0x1FAEF),
+              ("orca",           0x1FACD),
+              ("hairy_creature", 0x1FAC8),
+              ("trombone",       0x1FAAA),
+              ("landslide",      0x1F6D8),
+              ("treasure_chest", 0x1FAAE),
           ]
 
           font_obj = None
-          for sz in [160, 128, 96]:
+          for sz in [160, 128]:
               try:
                   font_obj = ImageFont.truetype(ttc_path, size=sz)
-                  log(f"Loaded font via Pillow at size={sz}")
                   break
-              except Exception as e:
-                  log(f"Pillow size={sz} error: {e}")
+              except Exception:
+                  pass
 
-          saved = []
-          for name, cp in emojis:
-              ch = chr(cp)
-              out_path = f"apple_macos_emojis/{name}.png"
+          for slug, cp in new_2026:
+              gname = cmap.get(cp)
+              in_cmap = cp in cmap
+              has_sbix = False
+              sbix_sizes = []
+              if "sbix" in tt and gname:
+                  for ppem, strike in tt["sbix"].strikes.items():
+                      if gname in strike.glyphs and strike.glyphs[gname].imageData:
+                          has_sbix = True
+                          sbix_sizes.append(ppem)
+
+              log(f"{slug} (U+{cp:04X}): in_cmap={in_cmap}, glyph={gname}, sbix_strikes={sbix_sizes}")
+
               img = Image.new("RGBA", (180, 180), (0, 0, 0, 0))
               draw = ImageDraw.Draw(img)
               if font_obj is not None:
                   try:
-                      draw.text((16, 12), ch, font=font_obj, embedded_color=True)
+                      draw.text((16, 12), chr(cp), font=font_obj, embedded_color=True)
                   except TypeError:
-                      draw.text((16, 12), ch, font=font_obj, fill=(255, 255, 255, 255))
-              else:
-                  draw.text((24, 64), ch, fill=(255, 255, 255, 255))
-              img.save(out_path, "PNG")
-              saved.append((name, ch, f"{name}.png"))
+                      draw.text((16, 12), chr(cp), font=font_obj, fill=(255, 255, 255, 255))
+              img.save(f"new_emojis_2026/{slug}.png", "PNG")
 
-          log(f"Saved {len(saved)} PNG files into apple_macos_emojis/")
+          # Check morx chains count if present
+          if "morx" in tt:
+              try:
+                  chains = getattr(tt["morx"], "chains", [])
+                  log(f"morx chains count: {len(chains)}")
+              except Exception as e:
+                  log(f"morx inspect note: {e}")
 
-          tiles = "\n".join(
-              f'<div class="tile"><img src="apple_macos_emojis/{fname}" alt="{ch}"><div class="lbl">{ch} {name}</div></div>'
-              for name, ch, fname in saved
+          # Build HTML preview
+          cards = "\n".join(
+              f'<div class="card"><img src="new_emojis_2026/{slug}.png"><div class="lbl">{slug}<br>U+{cp:04X}</div></div>'
+              for slug, cp in new_2026
           )
           html = f"""<!DOCTYPE html>
           <html lang="ar" dir="rtl">
           <head>
           <meta charset="UTF-8">
           <style>
-            body {{ font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0c0f14; color: #f3f4f6; padding: 28px; margin: 0; }}
-            h1 {{ font-size: 20px; margin: 0 0 8px 0; }}
-            .meta {{ font-size: 12px; color: #9ca3af; margin-bottom: 20px; }}
+            body {{ font-family: -apple-system, system-ui, sans-serif; background: #0c0f14; color: #f3f4f6; padding: 24px; }}
             .grid {{ display: flex; flex-wrap: wrap; gap: 14px; }}
-            .tile {{
-              background: #151a22;
-              border: 1px solid #263042;
-              border-radius: 12px;
-              padding: 12px;
-              width: 120px;
-              text-align: center;
-            }}
-            .tile img {{ width: 72px; height: 72px; object-fit: contain; }}
+            .card {{ background: #151a22; border: 1px solid #263042; border-radius: 12px; padding: 12px; width: 130px; text-align: center; }}
+            .card img {{ width: 76px; height: 76px; object-fit: contain; }}
             .lbl {{ margin-top: 8px; font-size: 11px; color: #cbd5e1; direction: ltr; }}
           </style>
           </head>
           <body>
-            <h1>إيموجي مسحوبة من macOS Runner</h1>
-            <div class="meta">الجداول: {', '.join(tables)}</div>
-            <div class="grid">{tiles}</div>
+            <h2>فحص إيموجيز 2026 وبنية الخط على macOS</h2>
+            <div class="grid">{cards}</div>
           </body>
           </html>"""
-          with open("macos_preview.html", "w", encoding="utf-8") as f:
+          with open("preview_2026.html", "w", encoding="utf-8") as f:
               f.write(html)
-          log("macos_preview.html written.")
           EOF
 
-      - name: Render preview PNG & PDF
+      - name: Render PNG preview
         run: |
-          echo "[$(date -u +%H:%M:%S)] Installing playwright & chromium..."
           npm init -y >/dev/null 2>&1
           npm install playwright >/dev/null 2>&1
           npx playwright install chromium >/dev/null 2>&1
 
-          cat << 'EOF' > render_macos.js
+          cat << 'EOF' > snap.js
           const { chromium } = require('playwright');
           const path = require('path');
-          const fs = require('fs');
-
-          const t0 = Date.now();
-          const p = (msg) => {
-            const line = `[+${((Date.now() - t0) / 1000).toFixed(1)}s] ${msg}`;
-            console.log(line);
-            fs.appendFileSync('diagnostics.txt', line + '\n');
-          };
-
           (async () => {
-            p('Launching Chromium...');
             const browser = await chromium.launch({ headless: true });
             const page = await browser.newPage({ deviceScaleFactor: 2 });
-            p('Opening macos_preview.html...');
-            await page.goto('file://' + path.resolve('macos_preview.html'), { waitUntil: 'load', timeout: 20000 });
-            p('Saving macos-emoji-preview.png...');
-            await page.screenshot({ path: 'macos-emoji-preview.png', fullPage: true });
-            p('Saving macos-emoji-preview.pdf...');
-            await page.pdf({ path: 'macos-emoji-preview.pdf', format: 'A4', printBackground: true });
+            await page.goto('file://' + path.resolve('preview_2026.html'), { waitUntil: 'load', timeout: 20000 });
+            await page.screenshot({ path: 'preview-2026.png', fullPage: true });
             await browser.close();
-            p('Done!');
           })();
           EOF
+          node snap.js
 
-          node render_macos.js
-
-      - name: Upload Results
+      - name: Upload 2026 Inspection Artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: macos-emoji-dump
+          name: apple-2026-reverse-check
           path: |
-            apple_macos_emojis/
-            macos-emoji-preview.png
-            macos-emoji-preview.pdf
+            new_emojis_2026/
+            preview-2026.png
             diagnostics.txt
