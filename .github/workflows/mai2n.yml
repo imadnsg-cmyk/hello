@@ -1,4 +1,4 @@
-name: Verify Apple SBIX Emojis & Render Comparison
+name: Verify Emoji Font Tables & Render Comparison
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ jobs:
       - name: Prepare workspace & diagnostics log
         run: |
           mkdir -p ~/.local/share/fonts sbix_out
-          echo "=== SBIX Verification Log ===" > diagnostics.txt
+          echo "=== Font Inspection & Render Log ===" > diagnostics.txt
           date -u >> diagnostics.txt
 
       - name: Download AppleEmoji.ttf with fallbacks
@@ -32,26 +32,24 @@ jobs:
           } >> diagnostics.txt 2>&1
           cat diagnostics.txt
 
-      - name: "Extract real PNGs directly from AppleEmoji sbix table"
+      - name: "Inspect font tables & render glyphs"
         run: |
           echo "[$(date -u +%H:%M:%S)] Installing fonttools & pillow..."
           python3 -m pip install -q fonttools pillow
 
-          echo "[$(date -u +%H:%M:%S)] Extracting sbix glyphs..."
+          echo "[$(date -u +%H:%M:%S)] Inspecting tables & extracting/rendering emojis..."
           python3 - << 'EOF'
-          import os, struct
+          import os
           from fontTools.ttLib import TTFont
+          from PIL import Image, ImageDraw, ImageFont
 
           font_path = os.path.expanduser("~/.local/share/fonts/AppleEmoji.ttf")
           tt = TTFont(font_path, fontNumber=0)
-          cmap = tt.getBestCmap()
-          sbix = tt["sbix"]
+          tables = list(tt.keys())
+          print("Available font tables:", tables)
 
-          # Choose largest strike available (e.g., 160px)
-          strikes = sorted(sbix.strikes.items(), key=lambda kv: kv[0], reverse=True)
-          print("Available sbix strikes (ppem):", [k for k, _ in strikes])
-          ppem, strike = strikes[0]
-          print(f"Using strike ppem={ppem}")
+          with open("diagnostics.txt", "a") as log:
+              log.write(f"\nFont tables ({len(tables)}): {tables}\n")
 
           targets = {
               "rocket": 0x1F680,      # 🚀
@@ -68,46 +66,51 @@ jobs:
           }
 
           extracted = []
-          for name, cp in targets.items():
-              glyph_name = cmap.get(cp)
-              if not glyph_name or glyph_name not in strike.glyphs:
-                  print(f"Missing glyph for {name} (U+{cp:X}): {glyph_name}")
-                  continue
-              g = strike.glyphs[glyph_name]
-              data = g.imageData
-              if not data:
-                  print(f"Empty imageData for {name} ({glyph_name})")
-                  continue
 
-              # sbix Glyph data has an 8-byte header (originOffsetX, originOffsetY, graphicType) followed by image bytes
-              if len(data) > 8 and data[8:12] == b"\x89PNG":
-                  img_bytes = data[8:]
-                  ext = "png"
-              elif data[:4] == b"\x89PNG":
-                  img_bytes = data
-                  ext = "png"
-              else:
-                  # Fallback: search PNG signature inside bytes
-                  idx = data.find(b"\x89PNG")
-                  if idx != -1:
-                      img_bytes = data[idx:]
-                      ext = "png"
+          # 1) Try sbix if present
+          if "sbix" in tt:
+              cmap = tt.getBestCmap()
+              sbix = tt["sbix"]
+              strikes = sorted(sbix.strikes.items(), key=lambda kv: kv[0], reverse=True)
+              ppem, strike = strikes[0]
+              for name, cp in targets.items():
+                  glyph_name = cmap.get(cp)
+                  if glyph_name and glyph_name in strike.glyphs:
+                      data = strike.glyphs[glyph_name].imageData or b""
+                      idx = data.find(b"\x89PNG")
+                      if idx != -1:
+                          out_file = f"sbix_out/{name}.png"
+                          with open(out_file, "wb") as f:
+                              f.write(data[idx:])
+                          extracted.append((name, chr(cp), f"{name}.png", "sbix"))
+
+          # 2) Fallback: render each emoji directly using Pillow/FreeType from AppleEmoji.ttf
+          if not extracted:
+              for size in [128, 96, 64]:
+                  try:
+                      pil_font = ImageFont.truetype(font_path, size=size)
+                      break
+                  except Exception:
+                      pil_font = None
+
+              for name, cp in targets.items():
+                  ch = chr(cp)
+                  out_file = f"sbix_out/{name}.png"
+                  img = Image.new("RGBA", (140, 140), (16, 20, 26, 255))
+                  draw = ImageDraw.Draw(img)
+                  if pil_font:
+                      try:
+                          draw.text((16, 10), ch, font=pil_font, embedded_color=True)
+                      except TypeError:
+                          draw.text((16, 10), ch, font=pil_font, fill=(255, 255, 255, 255))
                   else:
-                      print(f"Non-PNG or unknown format for {name}, len={len(data)}")
-                      continue
-
-              out_file = f"sbix_out/{name}.{ext}"
-              with open(out_file, "wb") as f:
-                  f.write(img_bytes)
-              extracted.append((name, chr(cp), f"{name}.{ext}", len(img_bytes)))
-              print(f"Extracted {out_file} ({len(img_bytes)} bytes) for {chr(cp)}")
+                      draw.text((20, 45), ch, fill=(255, 255, 255, 255))
+                  img.save(out_file)
+                  extracted.append((name, ch, f"{name}.png", "pil-truetype"))
 
           with open("diagnostics.txt", "a") as log:
-              log.write(f"\nSBIX strike used: {ppem}\nExtracted count: {len(extracted)}\n")
-              for item in extracted:
-                  log.write(f"  - {item}\n")
+              log.write(f"Generated glyph PNGs: {len(extracted)} (method={extracted[0][3] if extracted else 'none'})\n")
 
-          # Build HTML comparing raw sbix extracted images vs Linux system Noto render
           rows_html = "\n".join(
               f'<div class="cell"><img src="sbix_out/{fname}" alt="{ch}"><div class="cap">{ch} ({name})</div></div>'
               for name, ch, fname, _ in extracted
@@ -167,15 +170,15 @@ jobs:
           </head>
           <body>
             <div class="card">
-              <h2>1. إيموجي أبل الحقيقي المستخرج مباشرة من جدول sbix داخل ملف الـ 111MB</h2>
-              <div class="hint">هذه صور PNG حقيقية استُخرجت من داخل ملف الخط نفسه دون الاعتماد على رندر المتصفح للخط</div>
+              <h2>1. صور الإيموجي المستخرجة/المرسومة من ملف AppleEmoji.ttf (111MB)</h2>
+              <div class="hint">الجداول المكتشفة في الملف: {', '.join(tables)}</div>
               <div class="grid">
                 {rows_html}
               </div>
             </div>
 
             <div class="card">
-              <h2>2. نفس الإيموجي برندر نظام لينكس الافتراضي (Noto Color Emoji) للمقارنة</h2>
+              <h2>2. نفس الإيموجي برندر نظام لينكس الافتراضي للمقارنة</h2>
               <div class="noto-box">{all_chars}</div>
             </div>
           </body>
@@ -186,7 +189,7 @@ jobs:
           print("sbix_compare.html generated.")
           EOF
 
-      - name: Render SBIX comparison PNG & PDF with progress logs
+      - name: Render comparison PNG & PDF with progress logs
         run: |
           echo "[$(date -u +%H:%M:%S)] Installing playwright & chromium..."
           npm init -y >/dev/null 2>&1
@@ -222,7 +225,7 @@ jobs:
 
           node render_sbix.js
 
-      - name: Upload SBIX Verification Outputs
+      - name: Upload Verification Outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
