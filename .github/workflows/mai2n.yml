@@ -1,102 +1,278 @@
-name: Emoji Fonts Comparison (Single File)
+name: Multi-Attempt Emoji Render & PDF Comparison
 
 on:
   workflow_dispatch:
   push:
     paths:
-      - '.github/workflows/emoji-compare.yml'
+      - '.github/workflows/emoji-multi-attempt.yml'
 
 jobs:
-  render:
+  compare-emojis:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - name: Download Emoji Fonts (Apple & Noto)
+      - name: Prepare fonts directory & diagnostics log
         run: |
-          curl -L -o AppleColorEmoji.ttf "https://github.com/samuelngs/apple-emoji-linux/releases/latest/download/AppleColorEmoji.ttf"
-          curl -L -o NotoColorEmoji.ttf "https://github.com/googlefonts/noto-emoji/raw/main/fonts/NotoColorEmoji.ttf"
+          mkdir -p ~/.local/share/fonts
+          echo "=== Diagnostics Log ===" > diagnostics.txt
+          date -u >> diagnostics.txt
 
-      - name: Create HTML Comparison Page
+      - name: "Attempt 1: Download fonts with multiple fallbacks"
         run: |
-          cat << 'EOF' > index.html
+          {
+            echo "--- Downloading Apple Emoji Font (with fallbacks) ---"
+            curl -fL -sS --max-time 45 -o ~/.local/share/fonts/AppleEmoji.ttf \
+              "https://github.com/samuelngs/apple-emoji-linux/releases/latest/download/AppleColorEmoji.ttf" \
+              || curl -fL -sS --max-time 45 -o ~/.local/share/fonts/AppleEmoji.ttf \
+              "https://github.com/samuelngs/apple-emoji-ttf/releases/latest/download/AppleColorEmoji-Linux.ttf" \
+              || curl -fL -sS --max-time 45 -o ~/.local/share/fonts/AppleEmoji.ttf \
+              "https://raw.githubusercontent.com/samuelngs/apple-emoji-linux/master/AppleColorEmoji.ttf" \
+              || echo "WARN: Could not download AppleEmoji.ttf from fallback URLs"
+
+            echo "--- Downloading Noto Emoji Font (with fallbacks) ---"
+            curl -fL -sS --max-time 45 -o ~/.local/share/fonts/NotoColorEmoji.ttf \
+              "https://github.com/googlefonts/noto-emoji/raw/main/fonts/NotoColorEmoji.ttf" \
+              || curl -fL -sS --max-time 45 -o ~/.local/share/fonts/NotoColorEmoji.ttf \
+              "https://raw.githubusercontent.com/googlefonts/noto-emoji/main/fonts/NotoColorEmoji.ttf" \
+              || echo "WARN: Could not download NotoColorEmoji.ttf from fallback URLs"
+
+            ls -lh ~/.local/share/fonts/
+            fc-cache -fv
+            fc-list | grep -iE "apple|noto|emoji" || true
+          } >> diagnostics.txt 2>&1
+          cat diagnostics.txt
+
+      - name: "Attempt 1 & 2: Build HTML comparison page"
+        run: |
+          cat << 'EOF' > compare.html
           <!DOCTYPE html>
           <html lang="ar" dir="rtl">
           <head>
           <meta charset="UTF-8">
           <style>
             @font-face {
-              font-family: 'AppleEmoji';
-              src: url('./AppleColorEmoji.ttf') format('truetype');
+              font-family: 'AppleCustom';
+              src: url('file:///home/runner/.local/share/fonts/AppleEmoji.ttf') format('truetype');
             }
             @font-face {
-              font-family: 'NotoEmoji';
-              src: url('./NotoColorEmoji.ttf') format('truetype');
+              font-family: 'NotoCustom';
+              src: url('file:///home/runner/.local/share/fonts/NotoColorEmoji.ttf') format('truetype');
             }
+            * { box-sizing: border-box; }
             body {
               font-family: system-ui, -apple-system, sans-serif;
-              background: #111;
-              color: #fff;
-              padding: 40px;
+              background: #0f1115;
+              color: #f3f4f6;
+              padding: 32px;
               margin: 0;
             }
-            .card {
-              background: #1e1e1e;
-              border-radius: 16px;
-              padding: 24px;
-              margin-bottom: 24px;
-              border: 1px solid #333;
+            h1 { font-size: 22px; margin-bottom: 20px; color: #fff; }
+            .box {
+              background: #181b22;
+              border: 1px solid #2b303c;
+              border-radius: 14px;
+              padding: 20px;
+              margin-bottom: 18px;
             }
-            .apple { font-family: 'AppleEmoji', sans-serif; font-size: 40px; line-height: 1.6; }
-            .noto  { font-family: 'NotoEmoji', sans-serif; font-size: 40px; line-height: 1.6; }
-            h2 { margin-top: 0; font-size: 18px; color: #aaa; }
+            .label { font-size: 14px; color: #9ca3af; margin-bottom: 10px; }
+            .sample-apple {
+              font-family: 'AppleCustom', 'Apple Color Emoji', sans-serif;
+              font-size: 42px;
+              line-height: 1.6;
+            }
+            .sample-noto {
+              font-family: 'NotoCustom', 'Noto Color Emoji', sans-serif;
+              font-size: 42px;
+              line-height: 1.6;
+            }
+            .twemoji-row img {
+              width: 42px;
+              height: 42px;
+              vertical-align: middle;
+              margin: 0 2px;
+            }
+            .twemoji-row span.txt {
+              font-size: 32px;
+              vertical-align: middle;
+              margin-left: 8px;
+            }
           </style>
           </head>
           <body>
-            <div class="card">
-              <h2>1. رندر خط الآيفون (AppleColorEmoji - SBIX 3D)</h2>
-              <div class="apple">
-                تجربة الخطوط والإيموجي 🚀🔥😂🥺❤️✨👑📸🥳😭🤯
-              </div>
+            <h1>مقارنة رندر النصوص والإيموجي (محاولات متعددة)</h1>
+
+            <div class="box">
+              <div class="label">المحاولة 1 / أ: خط AppleCustom (ملف محلي)</div>
+              <div class="sample-apple">مرحباً يا إيماد 🚀🔥😂🥺❤️✨👑📸🥳😭🤯</div>
             </div>
 
-            <div class="card">
-              <h2>2. رندر خط أندرويد القياسي (NotoColorEmoji)</h2>
-              <div class="noto">
-                تجربة الخطوط والإيموجي 🚀🔥😂🥺❤️✨👑📸🥳😭🤯
+            <div class="box">
+              <div class="label">المحاولة 1 / ب: خط NotoCustom (ملف محلي)</div>
+              <div class="sample-noto">مرحباً يا إيماد 🚀🔥😂🥺❤️✨👑📸🥳😭🤯</div>
+            </div>
+
+            <div class="box">
+              <div class="label">المحاولة 3: مرجع Twemoji بصري مباشر</div>
+              <div class="twemoji-row">
+                <span class="txt">مرحباً يا إيماد</span>
+                <img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f680.svg" alt="🚀">
+                <img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f525.svg" alt="🔥">
+                <img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f602.svg" alt="😂">
+                <img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f97a.svg" alt="🥺">
+                <img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/2764.svg" alt="❤️">
+                <img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/2728.svg" alt="✨">
+                <img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f451.svg" alt="👑">
+                <img src="https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/svg/1f4f8.svg" alt="📸">
               </div>
             </div>
           </body>
           </html>
           EOF
+          echo "compare.html created successfully."
 
-      - name: Setup Playwright & Render PNG + PDF
+      - name: "Install Playwright & Browsers"
         run: |
-          npm init -y
-          npm install playwright
-          npx playwright install chromium
+          echo "[$(date -u +%H:%M:%S)] Installing playwright package..."
+          npm init -y >/dev/null 2>&1
+          npm install playwright >/dev/null 2>&1
+          echo "[$(date -u +%H:%M:%S)] Installing Chromium..."
+          npx playwright install chromium --with-deps >/dev/null 2>&1
+          echo "[$(date -u +%H:%M:%S)] Installing Firefox..."
+          npx playwright install firefox --with-deps >/dev/null 2>&1
+          echo "[$(date -u +%H:%M:%S)] Browsers installation complete."
 
-          cat << 'EOF' > render.js
-          const { chromium } = require('playwright');
+      - name: "Attempt 1 (Chromium) & Attempt 2 (Firefox) Render"
+        run: |
+          cat << 'EOF' > run_attempts.js
+          const { chromium, firefox } = require('playwright');
           const path = require('path');
+          const fs = require('fs');
+
+          const startAll = Date.now();
+          const elapsed = () => `+${((Date.now() - startAll) / 1000).toFixed(1)}s`;
+
+          function progress(msg) {
+            const line = `[${elapsed()}] ${msg}`;
+            console.log(line);
+            fs.appendFileSync('diagnostics.txt', line + '\n');
+          }
+
+          async function withTimeout(promise, ms, label) {
+            let timer;
+            const timeoutPromise = new Promise((_, reject) => {
+              timer = setTimeout(() => reject(new Error(`Timeout after ${ms}ms during: ${label}`)), ms);
+            });
+            try {
+              return await Promise.race([promise, timeoutPromise]);
+            } finally {
+              clearTimeout(timer);
+            }
+          }
+
+          async function runEngine(engineName, browserType, prefix) {
+            progress(`========== START ${engineName} ==========`);
+            let browser;
+            try {
+              progress(`${engineName}: launching browser...`);
+              browser = await withTimeout(
+                browserType.launch({ headless: true }),
+                30000,
+                `${engineName} launch`
+              );
+              progress(`${engineName}: browser launched.`);
+
+              const context = await browser.newContext({ deviceScaleFactor: 2 });
+              const page = await context.newPage();
+              page.setDefaultTimeout(20000);
+
+              progress(`${engineName}: opening compare.html (domcontentloaded)...`);
+              await withTimeout(
+                page.goto('file://' + path.resolve('compare.html'), { waitUntil: 'domcontentloaded', timeout: 20000 }),
+                25000,
+                `${engineName} page.goto`
+              );
+              progress(`${engineName}: DOM loaded. Waiting for fonts & external assets (up to 12s)...`);
+
+              await Promise.race([
+                page.evaluate(async () => { await document.fonts.ready; }),
+                new Promise(r => setTimeout(r, 12000))
+              ]);
+
+              const fontInfo = await page.evaluate(() =>
+                [...document.fonts].map(f => `${f.family} [${f.status}]`)
+              );
+              progress(`${engineName}: fonts check -> ${JSON.stringify(fontInfo)}`);
+
+              progress(`${engineName}: capturing screenshot ${prefix}.png...`);
+              await withTimeout(
+                page.screenshot({ path: `${prefix}.png`, fullPage: true, animations: 'disabled' }),
+                25000,
+                `${engineName} screenshot`
+              );
+              progress(`${engineName}: saved ${prefix}.png.`);
+
+              if (typeof page.pdf === 'function') {
+                progress(`${engineName}: generating PDF ${prefix}.pdf...`);
+                await withTimeout(
+                  page.pdf({ path: `${prefix}.pdf`, format: 'A4', printBackground: true }),
+                  25000,
+                  `${engineName} pdf`
+                );
+                progress(`${engineName}: saved ${prefix}.pdf.`);
+              } else {
+                progress(`${engineName}: page.pdf not supported on this engine.`);
+              }
+
+            } catch (err) {
+              progress(`${engineName}: ERROR -> ${err.message}`);
+            } finally {
+              if (browser) {
+                progress(`${engineName}: closing browser...`);
+                await browser.close().catch(() => {});
+                progress(`${engineName}: browser closed.`);
+              }
+              progress(`========== END ${engineName} ==========`);
+            }
+          }
 
           (async () => {
-            const browser = await chromium.launch();
-            const page = await browser.newPage({ deviceScaleFactor: 2 });
-            await page.goto('file://' + path.resolve('index.html'), { waitUntil: 'networkidle' });
-            await page.evaluateHandle('document.fonts.ready');
-
-            await page.screenshot({ path: 'comparison.png', fullPage: true });
-            await page.pdf({ path: 'comparison.pdf', format: 'A4', printBackground: true });
-
-            await browser.close();
+            progress('Starting render pipeline...');
+            await runEngine('Chromium (Attempt 1)', chromium, 'attempt1-chromium');
+            await runEngine('Firefox (Attempt 2)', firefox, 'attempt2-firefox');
+            progress('Render pipeline finished.');
           })();
           EOF
 
-          node render.js
+          node --unhandled-rejections=warn run_attempts.js
 
-      - name: Upload PNG and PDF Artifacts
+      - name: "Attempt 3: Convert PNG to PDF fallback if needed"
+        if: always()
+        run: |
+          echo "[$(date -u +%H:%M:%S)] Checking PDF fallbacks..."
+          python3 - << 'EOF'
+          import os
+          from PIL import Image
+
+          for base in ['attempt1-chromium', 'attempt2-firefox']:
+              png_path = f'{base}.png'
+              pdf_path = f'{base}.pdf'
+              if os.path.exists(png_path) and not os.path.exists(pdf_path):
+                  img = Image.open(png_path).convert('RGB')
+                  img.save(pdf_path)
+                  msg = f'Fallback generated {pdf_path} from {png_path}'
+                  print(msg)
+                  with open('diagnostics.txt', 'a') as f:
+                      f.write(msg + '\n')
+          EOF
+
+      - name: "Upload All Attempt Outputs"
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: emoji-comparison-output
+          name: emoji-comparison-results
           path: |
-            comparison.png
-            comparison.pdf
+            attempt1-chromium.png
+            attempt1-chromium.pdf
+            attempt2-firefox.png
+            attempt2-firefox.pdf
+            diagnostics.txt
